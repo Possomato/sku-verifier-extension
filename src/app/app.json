@@ -1,0 +1,28 @@
+{
+  "name": "SKU Verifier Extension",
+  "uid": "sku-verifier-app",
+  "description": "Uma extensão de UI para verificar SKUs em deals e renderizar campos interativos baseados em requisitos específicos.",
+  "public": false,
+  "scopes": [
+    "crm.objects.deals.read",
+    "crm.objects.deals.write",
+    "crm.objects.line_items.read",
+    "crm.objects.line_items.write"
+  ],
+  "extensions": {
+    "crm": {
+      "cards": [
+        {
+          "file": "./extensions/sku-card.json"
+        }
+      ]
+    }
+  },
+  "serverlessFunctions": [
+    {
+      "name": "fetchLineItems",  
+      "file": "./functions/fetchLineItems.js",  
+      "secrets": []  
+    }
+  ]
+}

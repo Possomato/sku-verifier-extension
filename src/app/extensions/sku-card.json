@@ -1,0 +1,16 @@
+{
+  "type": "crm-card",
+  "data": {
+    "title": "Verificador de SKUs",
+    "uid": "sku-verifier-card",
+    "module": {
+      "file": "./sku-card.jsx"
+    },
+    "location": "crm.record.tab",
+    "objectTypes": [
+      {
+        "name": "deal"
+      }
+    ]
+  }
+}
