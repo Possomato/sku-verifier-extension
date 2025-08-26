@@ -8,86 +8,56 @@ import {
   Select,
   Input,
   Button,
-  CrmAssociationPropertyList,  // Componente para fetch de associações
+  Alert,
+  Box,
+  Heading,
+  Tag
 } from '@hubspot/ui-extensions';
 
-// Array de requisitos
-const requisitos = [
-  { sku: 'DOCU-GRAL-24692090982', propsDeal: ['de_qual_pais_e_o_antecedente_penal_'] },
-  { sku: 'DOCU-GRAL-24662242337', propsDeal: ['qual_documento_sera_emitido_', 'se_for_para_lmd__informar_qual_o_consulado_de_apresentacao_'] },
-  { sku: 'DOCU-GRAL-24662242335', propsDeal: ['em_qual_pais_sera_feito_o_registro_'] },
-  { sku: 'DOCU-EDUC-24692245591', propsDeal: ['ensino_medio_finalizado_'] },
-  { sku: 'DOCU-GRAL-24657435405', propsDeal: ['qual_desses_e_o_servico_'] },
-  { sku: 'DOCU-GRAL-24664984750', propsDeal: ['formato_digital_ou_fisico', 'com_ou_sem_pagina_adicional'] },
-  { sku: 'DOCU-GRAL-24666686901', propsDeal: ['em_qual_pais_sera_feita_a_homologacao'] }
-];
-
-// Componente principal
 const SkuCard = ({ context, actions }) => {
   const [loading, setLoading] = useState(true);
   const [matchingSkus, setMatchingSkus] = useState([]);
   const [dealProperties, setDealProperties] = useState({});
   const [errorMessage, setErrorMessage] = useState(null);
-  const [lineItems, setLineItems] = useState([]);
+  const [debugInfo, setDebugInfo] = useState(null);
+  const [saving, setSaving] = useState({});
+  const [success, setSuccess] = useState({});
 
   useEffect(() => {
     const fetchData = async () => {
       try {
+        setLoading(true);
+        setErrorMessage(null);
+        
         const { crm } = context;
         const dealId = crm.objectId;
-        console.log('DEBUG: dealId:', dealId);
+        
+        console.log('=== INICIANDO fetchData no componente ===');
+        console.log('Deal ID:', dealId);
+        console.log('Context:', context);
 
-        // Fetch propriedades do deal
-        const props = await actions.fetchCrmObjectProperties(requisitos.flatMap(r => r.propsDeal));
-        console.log('DEBUG: Deal Properties:', props);
-        setDealProperties(props);
-
-        // Fetch line items via componente (alternativa sem serverless)
-        // Isso retorna uma lista de associações
-        const associations = await actions.fetchCrmAssociations({
-          objectTypeId: crm.objectTypeId,
-          objectId: dealId,
-          toObjectTypeId: '0-5',  // Line Items ID
-          associationCategory: 'HUBSPOT_DEFINED',
-          associationTypeId: 20
+        // Chamar a funÃ§Ã£o serverless
+        const response = await actions.executeServerlessFunction({
+          functionName: 'fetchLineItems',
+          parameters: { dealId }
         });
-        console.log('DEBUG: Associations:', associations);
 
-        const lineItemIds = associations.results?.map(assoc => assoc.toObjectId) || [];
-        console.log('DEBUG: Line Item IDs:', lineItemIds);
+        console.log('Resposta da funÃ§Ã£o serverless:', response);
 
-        if (lineItemIds.length === 0) {
-          console.log('DEBUG: Nenhum line item encontrado.');
-          setLineItems([]);
-          return;
+        if (response.error) {
+          throw new Error(response.error);
         }
 
-        // Fetch hs_sku para cada line item
-        const items = await Promise.all(
-          lineItemIds.map(id => actions.fetchCrmObjectProperties(['hs_sku'], 'line_item', id))
-        );
-        console.log('DEBUG: Line Items Data:', items);
+        setMatchingSkus(response.matchingSkus || []);
+        setDealProperties(response.dealProperties || {});
+        setDebugInfo(response.debug);
 
-        setLineItems(items);
+        console.log('Matching SKUs:', response.matchingSkus);
+        console.log('Deal Properties:', response.dealProperties);
 
-        // Extrai e normaliza SKUs
-        const skusPresentes = [
-          ...new Set(
-            items.map(item => item.hs_sku?.trim().toUpperCase() || '').filter(sku => sku)
-          )
-        ];
-        console.log('DEBUG: SKUs Presentes Normalizados:', skusPresentes);
-
-        // Filtra matching
-        const matches = requisitos.filter(r =>
-          skusPresentes.includes(r.sku.trim().toUpperCase())
-        );
-        console.log('DEBUG: Matching SKUs:', matches);
-
-        setMatchingSkus(matches);
-      } catch (err) {
-        console.error('Erro no fetch:', err);
-        setErrorMessage(`Erro ao carregar dados: ${err.message}`);
+      } catch (error) {
+        console.error('Erro no fetchData:', error);
+        setErrorMessage(`Erro ao carregar dados: ${error.message}`);
       } finally {
         setLoading(false);
       }
@@ -96,51 +66,199 @@ const SkuCard = ({ context, actions }) => {
     fetchData();
   }, [context, actions]);
 
-  if (loading) return <LoadingSpinner label="Carregando SKUs..." />;
+  const handleSave = async (skuIndex, propName, value) => {
+    const saveKey = `${skuIndex}-${propName}`;
+    
+    try {
+      setSaving(prev => ({ ...prev, [saveKey]: true }));
+      
+      // Atualizar propriedade do deal
+      await actions.updateCrmObjectProperties({
+        [propName]: value
+      });
 
-  if (errorMessage) return <Text format={{ variant: 'error' }}>{errorMessage}</Text>;
+      // Atualizar estado local
+      setDealProperties(prev => ({
+        ...prev,
+        [propName]: value
+      }));
 
-  if (matchingSkus.length === 0) return <Text>Nenhum SKU correspondente encontrado nos line items.</Text>;
+      // Mostrar mensagem de sucesso
+      setSuccess(prev => ({ ...prev, [saveKey]: true }));
+      
+      // Remover mensagem de sucesso apÃ³s 3 segundos
+      setTimeout(() => {
+        setSuccess(prev => ({ ...prev, [saveKey]: false }));
+      }, 3000);
+
+    } catch (error) {
+      console.error('Erro ao salvar:', error);
+      setErrorMessage(`Erro ao salvar propriedade ${propName}: ${error.message}`);
+    } finally {
+      setSaving(prev => ({ ...prev, [saveKey]: false }));
+    }
+  };
+
+  if (loading) {
+    return (
+      <Flex direction="column" align="center" gap="medium">
+        <LoadingSpinner label="Carregando informaÃ§Ãµes dos SKUs..." />
+        <Text>Verificando line items do deal...</Text>
+      </Flex>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <Alert variant="error" title="Erro">
+        <Text>{errorMessage}</Text>
+        {debugInfo && (
+          <Box marginTop="small">
+            <Text format={{ variant: 'microcopy' }}>
+              Debug Info: {JSON.stringify(debugInfo, null, 2)}
+            </Text>
+          </Box>
+        )}
+      </Alert>
+    );
+  }
+
+  if (matchingSkus.length === 0) {
+    return (
+      <Alert variant="warning" title="Nenhum SKU encontrado">
+        <Text>
+          Nenhum dos SKUs configurados foi encontrado nos line items deste deal.
+        </Text>
+        {debugInfo && (
+          <Box marginTop="small">
+            <Text format={{ fontWeight: 'bold' }}>InformaÃ§Ãµes de Debug:</Text>
+            <Text format={{ variant: 'microcopy' }}>
+              â€¢ Deal ID: {debugInfo.dealId}<br/>
+              â€¢ Line Items encontrados: {debugInfo.lineItemsCount}<br/>
+              â€¢ SKUs presentes: {debugInfo.skusPresentes?.join(', ') || 'Nenhum'}<br/>
+              â€¢ SKUs configurados: {debugInfo.skusRequisitos?.join(', ') || 'Nenhum'}<br/>
+              â€¢ Mensagem: {debugInfo.message}
+            </Text>
+          </Box>
+        )}
+      </Alert>
+    );
+  }
 
   return (
-    <Flex direction="column" gap="medium">
-      {matchingSkus.map((req, index) => (
-        <Flex key={index} direction="column" gap="small">
-          <Text format={{ fontWeight: 'bold' }}>SKU: {req.sku}</Text>
-          <Divider />
-          {req.propsDeal.map(prop => {
-            const value = dealProperties[prop] || '';
-            const isSelect = prop.includes('qual_') || prop.includes('em_qual_');
-            return isSelect ? (
-              <Select
-                key={prop}
-                label={prop.replace(/_/g, ' ')}
-                name={prop}
-                value={value}
-                options={[
-                  { value: 'opcao1', label: 'Opção 1' },
-                  { value: 'opcao2', label: 'Opção 2' }
-                ]}
-                onChange={newValue => actions.updateProperties({ [prop]: newValue })}
-              />
-            ) : (
-              <Input
-                key={prop}
-                label={prop.replace(/_/g, ' ')}
-                name={prop}
-                value={value}
-                onChange={newValue => actions.updateProperties({ [prop]: newValue })}
-              />
-            );
-          })}
-          <Button onClick={() => alert('Salvo!')}>Salvar</Button>
-        </Flex>
+    <Flex direction="column" gap="large">
+      <Box>
+        <Heading>ConfiguraÃ§Ã£o de SKUs</Heading>
+        <Text format={{ variant: 'microcopy' }}>
+          {matchingSkus.length} SKU(s) encontrado(s) nos line items deste deal
+        </Text>
+      </Box>
+
+      {matchingSkus.map((requisito, skuIndex) => (
+        <Box 
+          key={`${requisito.sku}-${skuIndex}`}
+          padding="medium" 
+          style={{ 
+            border: '1px solid #e5e8ed', 
+            borderRadius: '8px',
+            backgroundColor: '#f8f9fa'
+          }}
+        >
+          <Flex direction="column" gap="medium">
+            {/* CabeÃ§alho do SKU */}
+            <Flex direction="row" justify="between" align="center">
+              <Heading level={3}>SKU: {requisito.sku}</Heading>
+              <Tag variant="success">Encontrado</Tag>
+            </Flex>
+            
+            <Divider />
+
+            {/* Campos para cada propriedade */}
+            {requisito.propsDeal.map((prop, propIndex) => {
+              const currentValue = dealProperties[prop.name] || '';
+              const saveKey = `${skuIndex}-${prop.name}`;
+              const isSaving = saving[saveKey];
+              const showSuccess = success[saveKey];
+
+              return (
+                <Box key={`${prop.name}-${propIndex}`}>
+                  <Flex direction="column" gap="small">
+                    <Text format={{ fontWeight: 'bold' }}>
+                      {prop.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    </Text>
+
+                    <Flex direction="row" gap="small" align="end">
+                      <Box flex={1}>
+                        {prop.type === 'select' ? (
+                          <Select
+                            name={prop.name}
+                            value={currentValue}
+                            placeholder="Selecione uma opÃ§Ã£o..."
+                            options={[
+                              { value: '', label: '-- Selecione --' },
+                              ...prop.options
+                            ]}
+                            onChange={(value) => {
+                              // Atualizar estado local imediatamente para feedback visual
+                              setDealProperties(prev => ({
+                                ...prev,
+                                [prop.name]: value
+                              }));
+                            }}
+                          />
+                        ) : (
+                          <Input
+                            name={prop.name}
+                            value={currentValue}
+                            placeholder={`Digite ${prop.name.replace(/_/g, ' ')}`}
+                            onChange={(value) => {
+                              // Atualizar estado local imediatamente para feedback visual
+                              setDealProperties(prev => ({
+                                ...prev,
+                                [prop.name]: value
+                              }));
+                            }}
+                          />
+                        )}
+                      </Box>
+
+                      <Button
+                        variant="primary"
+                        size="small"
+                        disabled={isSaving || !currentValue}
+                        onClick={() => handleSave(skuIndex, prop.name, currentValue)}
+                      >
+                        {isSaving ? 'Salvando...' : 'Salvar'}
+                      </Button>
+                    </Flex>
+
+                    {showSuccess && (
+                      <Alert variant="success" title="Salvo com sucesso!">
+                        <Text format={{ variant: 'microcopy' }}>
+                          O valor foi atualizado no deal.
+                        </Text>
+                      </Alert>
+                    )}
+                  </Flex>
+                </Box>
+              );
+            })}
+          </Flex>
+        </Box>
       ))}
+
+      {/* InformaÃ§Ãµes de debug (apenas em desenvolvimento) */}
+      {debugInfo && process.env.NODE_ENV === 'development' && (
+        <Box padding="small" style={{ backgroundColor: '#f0f0f0', fontSize: '12px' }}>
+          <Text format={{ fontWeight: 'bold' }}>Debug Info:</Text>
+          <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+        </Box>
+      )}
     </Flex>
   );
 };
 
-// Registrar a extensão
+// Registrar a extensÃ£o
 hubspot.extend(({ context, actions }) => (
   <SkuCard context={context} actions={actions} />
 ));
